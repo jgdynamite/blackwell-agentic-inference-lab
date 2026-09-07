@@ -14,7 +14,8 @@ Subcommands map one-to-one to the separated workflows required by Phase 3A:
 - ``pilot``           the short, owner-approved compatibility/headroom pilot
                       (RunMode.REAL): blocked until reconciliation is clean,
                       provider-native only, live provenance verified first.
-- ``full-baseline``   DISABLED: Phase 3B measurement is not authorized.
+- ``full-baseline``   DISABLED: the full 12-cell baseline remains unauthorized
+                      (only the bounded D-0014 pilot is authorized).
 - ``verify-results``  external verification of persisted genuine results;
                       an empty directory is a FAILURE unless --allow-empty.
 - ``teardown-plan``   identity-verified, saved destroy plan from the ledger.
@@ -56,13 +57,30 @@ from blackwell_lab.workload.validation import (
     validate_result_semantics,
 )
 
-#: Phase 3B full-baseline measurement is NOT authorized. Enabling this
-#: constant requires a separate owner authorization recorded in the decision
-#: log and reviewed in a pull request — never a runtime flag or environment
-#: variable.
+#: The full 12-cell Phase 3 baseline is NOT authorized (D-0014 authorizes
+#: only the bounded compatibility/headroom pilot). Enabling this constant
+#: requires a separate owner authorization recorded in the decision log and
+#: reviewed in a pull request — never a runtime flag or environment variable.
 FULL_BASELINE_AUTHORIZED = False
 
-PILOT_APPROVAL_TEMPLATE = "I approve the short Akamai pilot for run {run_label}"
+PILOT_APPROVAL_TEMPLATE = (
+    "I approve the short Akamai pilot for run {run_tag} ({run_label}) "
+    "using config sha256:{config_sha256}"
+)
+
+AUTHORIZED_PILOT_CELLS = (
+    ("interactive", 1),
+    ("batch-heavy", 4),
+    ("batch-heavy", 8),
+)
+AUTHORIZED_PILOT_PRECISION = "bf16"
+AUTHORIZED_PILOT_SERVING_MODE = "provider-native"
+AUTHORIZED_PILOT_GPU = "RTX PRO 6000 Blackwell"
+AUTHORIZED_PILOT_REGION = "us-sea"
+AUTHORIZED_PILOT_INSTANCE_TYPE = "g3-gpu-rtxpro6000-blackwell-1"
+AUTHORIZED_WARMUP_PASSES = 1
+AUTHORIZED_REPETITIONS = 1
+AUTHORIZED_TASKS_PER_REPETITION = 20
 
 
 def _repo_root() -> Path:
@@ -497,8 +515,28 @@ def cmd_session_summary(args: argparse.Namespace) -> int:
 # -- pilot / full baseline ----------------------------------------------------
 
 
-def _load_pilot_config(path: Path) -> dict:
-    config = json.loads(path.read_text(encoding="utf-8"))
+def _path_is_inside_repo(path: Path, repo: Path) -> bool:
+    try:
+        path.relative_to(repo)
+        return True
+    except ValueError:
+        return False
+
+
+def require_external_pilot_config(path_argument: str) -> Path:
+    """Pilot config must be an existing absolute path outside this repository."""
+    path = Path(path_argument)
+    if not path.is_absolute() or not path.is_file():
+        raise ConfigError("pilot config must be an existing absolute path outside the repository")
+    repo = _repo_root()
+    resolved = path.resolve()
+    if _path_is_inside_repo(path, repo) or _path_is_inside_repo(resolved, repo):
+        raise ConfigError("pilot config must be an existing absolute path outside the repository")
+    return resolved
+
+
+def validate_authorized_pilot_config(config: dict) -> None:
+    """Rejects any config that is not the locked D-0014 diagnostic envelope."""
     required = (
         "endpoint",
         "cloud",
@@ -511,10 +549,73 @@ def _load_pilot_config(path: Path) -> dict:
     for key in required:
         if key not in config:
             raise ConfigError(f"pilot config is missing required section: {key}")
+    verification = config.get("model_verification")
+    if not isinstance(verification, dict):
+        raise ConfigError("pilot config is missing required section: model_verification")
     for key in ("artifact_dir", "digest_manifest"):
-        if not config["model_verification"].get(key):
+        if not verification.get(key):
             raise ConfigError(f"pilot config is missing model_verification.{key}")
-    return config
+
+    if config.get("comparison_mode") != AUTHORIZED_PILOT_SERVING_MODE:
+        raise ConfigError(
+            "the pilot runs only in provider-native mode. "
+            "Controlled-resource labeling requires the joint 14-vCPU/100-GiB "
+            "serving-plus-benchmark limit to be genuinely enforced and "
+            "observed, which is not yet implemented (decision D-0013)."
+        )
+
+    cloud = config.get("cloud")
+    if not isinstance(cloud, dict):
+        raise ConfigError("pilot config is missing required section: cloud")
+    if cloud.get("instance_type") != AUTHORIZED_PILOT_INSTANCE_TYPE:
+        raise ConfigError(
+            f"pilot config cloud.instance_type must equal {AUTHORIZED_PILOT_INSTANCE_TYPE}"
+        )
+    if cloud.get("region") != AUTHORIZED_PILOT_REGION:
+        raise ConfigError(f"pilot config cloud.region must equal {AUTHORIZED_PILOT_REGION}")
+
+    model = config.get("model")
+    if not isinstance(model, dict):
+        raise ConfigError("pilot config is missing required section: model")
+    if model.get("precision") != AUTHORIZED_PILOT_PRECISION:
+        raise ConfigError(f"pilot config model.precision must equal {AUTHORIZED_PILOT_PRECISION}")
+
+    if config.get("expected_gpu_model") != AUTHORIZED_PILOT_GPU:
+        raise ConfigError(f"pilot config expected_gpu_model must equal {AUTHORIZED_PILOT_GPU}")
+
+    if config.get("warmup_passes") != AUTHORIZED_WARMUP_PASSES:
+        raise ConfigError("pilot config warmup_passes must equal 1")
+    if config.get("repetitions") != AUTHORIZED_REPETITIONS:
+        raise ConfigError("pilot config repetitions must equal 1")
+    if config.get("tasks_per_repetition") != AUTHORIZED_TASKS_PER_REPETITION:
+        raise ConfigError("pilot config tasks_per_repetition must equal 20")
+
+    raw_cells = config.get("cells")
+    if not isinstance(raw_cells, list):
+        raise ConfigError("pilot config must declare exactly the three authorized D-0014 cells")
+    normalized: list[tuple[object, object]] = []
+    for cell in raw_cells:
+        if not isinstance(cell, dict):
+            raise ConfigError("pilot config must declare exactly the three authorized D-0014 cells")
+        normalized.append((cell.get("profile"), cell.get("concurrency")))
+    if tuple(normalized) != AUTHORIZED_PILOT_CELLS:
+        raise ConfigError(
+            "pilot config cells must be exactly interactive/1, batch-heavy/4, "
+            "and batch-heavy/8 with no missing, additional, or duplicate cells"
+        )
+
+
+def _load_pilot_config_bytes(path: Path) -> tuple[dict, str]:
+    raw = path.read_bytes()
+    digest = hashlib.sha256(raw).hexdigest()
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ConfigError("pilot config is not valid JSON") from exc
+    if not isinstance(config, dict):
+        raise ConfigError("pilot config must be a JSON object")
+    validate_authorized_pilot_config(config)
+    return config, digest
 
 
 def cmd_pilot(args: argparse.Namespace) -> int:
@@ -523,7 +624,17 @@ def cmd_pilot(args: argparse.Namespace) -> int:
 
     lifecycle.refuse_hosted_execution()
     run_label = args.run_label
-    expected = PILOT_APPROVAL_TEMPLATE.format(run_label=run_label)
+    try:
+        config_path = require_external_pilot_config(args.config)
+        config, config_sha256 = _load_pilot_config_bytes(config_path)
+    except ConfigError as exc:
+        print(f"BLOCKED: {exc}", file=sys.stderr)
+        return 1
+    expected = PILOT_APPROVAL_TEMPLATE.format(
+        run_tag=args.run_tag,
+        run_label=run_label,
+        config_sha256=config_sha256,
+    )
     if (args.approve or "") != expected:
         print(
             "BLOCKED: the pilot requires the exact owner approval phrase "
@@ -533,20 +644,6 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         return 1
 
     results_dir = _resolve_real_results_dir()
-    config = _load_pilot_config(Path(args.config))
-
-    # Comparison mode: provider-native ONLY until the joint cgroup envelope
-    # is genuinely implemented, enforced, and observed. A configuration-based
-    # controlled-resource label is a fabrication and is rejected.
-    if config["comparison_mode"] != "provider-native":
-        print(
-            "BLOCKED: the pilot runs only in provider-native mode. "
-            "Controlled-resource labeling requires the joint 14-vCPU/100-GiB "
-            "serving-plus-benchmark limit to be genuinely enforced and "
-            "observed, which is not yet implemented (decision D-0013).",
-            file=sys.stderr,
-        )
-        return 1
 
     # Lifecycle gate: the pilot is blocked until reconciliation is fully clean.
     paths = lifecycle.lifecycle_paths(results_dir, args.run_tag)
@@ -571,16 +668,14 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         return 1
 
     endpoint = config["endpoint"]
-    client = OpenAICompatibleClient(
-        endpoint["base_url"],
-        endpoint["model"],
-        api_key_env=endpoint.get("api_key_env"),
+    lifecycle.record_session_event(
+        paths,
+        "pilot_started",
+        {"run_label": run_label, "config_sha256": config_sha256},
     )
-
-    lifecycle.record_session_event(paths, "pilot_started", {"run_label": run_label})
-    cells = config.get("cells") or [
-        {"profile": "interactive", "concurrency": 1},
-        {"profile": "batch-heavy", "concurrency": 4},
+    cells = [
+        {"profile": profile, "concurrency": concurrency}
+        for profile, concurrency in AUTHORIZED_PILOT_CELLS
     ]
     summaries = []
     for index, cell in enumerate(cells, start=1):
@@ -600,7 +695,7 @@ def cmd_pilot(args: argparse.Namespace) -> int:
         spec = realbench.RealRunSpec(
             profile_name=cell["profile"],
             concurrency=cell["concurrency"],
-            comparison_mode="provider-native",
+            comparison_mode=AUTHORIZED_PILOT_SERVING_MODE,
             instance_type=observed.instance["instance_type"],
             region=observed.instance["region"],
             list_price_usd_per_hour=config["cloud"]["list_price_usd_per_hour"],
@@ -610,10 +705,17 @@ def cmd_pilot(args: argparse.Namespace) -> int:
             engine_version=observed.engine_version,
             container_digest=observed.container_digest,
             container_cuda_runtime_version=observed.container_cuda_runtime_version,
-            repetitions=int(config.get("repetitions", 1)),
-            warmup_passes=int(config.get("warmup_passes", 1)),
-            tasks_per_repetition=int(config.get("tasks_per_repetition", 20)),
+            repetitions=AUTHORIZED_REPETITIONS,
+            warmup_passes=AUTHORIZED_WARMUP_PASSES,
+            tasks_per_repetition=AUTHORIZED_TASKS_PER_REPETITION,
             run_label=f"{run_label}-cell{index}",
+        )
+        # Construct the client only after config, approval, ledger, and
+        # live-provenance checks for this cell have passed.
+        client = OpenAICompatibleClient(
+            endpoint["base_url"],
+            endpoint["model"],
+            api_key_env=endpoint.get("api_key_env"),
         )
         records = realbench.run_real_cell(
             spec,
@@ -657,13 +759,13 @@ def cmd_pilot(args: argparse.Namespace) -> int:
 def cmd_full_baseline(_args: argparse.Namespace) -> int:
     if not FULL_BASELINE_AUTHORIZED:
         print(
-            "DISABLED: the full Akamai baseline (Phase 3B provisioning and "
-            "measurement) is not authorized. It remains disabled until the "
+            "DISABLED: the full 12-cell Akamai baseline is not authorized. "
+            "Decision D-0014 authorizes only the bounded compatibility/"
+            "headroom pilot. The full baseline remains disabled until the "
             "owner grants separate explicit authorization, recorded in "
             "docs/decision-log.md and enabled through a reviewed change to "
-            "FULL_BASELINE_AUTHORIZED. The short pilot must complete first, "
-            "and full-run settings are frozen only after the pilot "
-            "(docs/roadmap.md, Phase 3B).",
+            "FULL_BASELINE_AUTHORIZED. Full-run settings are frozen only "
+            "after the pilot (docs/roadmap.md, Phase 3B).",
             file=sys.stderr,
         )
         return 3
@@ -776,8 +878,8 @@ def build_parser() -> argparse.ArgumentParser:
             "require separate explicit owner approval phrases (naming the "
             "run tag and the reviewed plan digest) and run only in the "
             "owner's local environment. Every lifecycle artifact lives in "
-            "the external private LAB_RESULTS_DIR. The full baseline is "
-            "disabled until Phase 3B is authorized."
+            "the external private LAB_RESULTS_DIR. The full 12-cell baseline "
+            "remains disabled; only the bounded D-0014 pilot is authorized."
         ),
     )
     sub = parser.add_subparsers(dest="command", required=True)
@@ -818,13 +920,18 @@ def build_parser() -> argparse.ArgumentParser:
     pilot_parser.add_argument("--run-tag", required=True)
     pilot_parser.add_argument("--run-label", required=True)
     pilot_parser.add_argument(
-        "--config", required=True, help="Pilot config JSON (kept outside Git)."
+        "--config",
+        required=True,
+        help=(
+            "Existing absolute path to the approved D-0014 pilot config JSON; "
+            "must live outside this repository."
+        ),
     )
     pilot_parser.add_argument("--approve", help="The exact pilot approval phrase.")
 
     sub.add_parser(
         "full-baseline",
-        help="DISABLED until Phase 3B is separately authorized by the owner.",
+        help="DISABLED: the full 12-cell baseline remains unauthorized (D-0014).",
     )
 
     verify_parser = sub.add_parser(
