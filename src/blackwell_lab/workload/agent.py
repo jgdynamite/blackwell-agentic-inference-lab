@@ -23,6 +23,12 @@ Timing semantics (decision D-0010; measurement contract §1/§2):
   execution, including the terminal tool**: tool latency that reaches or
   crosses the deadline yields ``task_timeout``, never a completion.
 
+- **TTFT** — first of ``content_chunk``, ``reasoning_chunk``,
+  ``native_tool_call_delta``, or ``token``. The assembled
+  ``native_tool_call`` does not start TTFT. A tool-call delta is not a
+  token. A stream that finishes but fails native-call assembly still
+  retains its completed turn record.
+
 Retry policy: ``RETRIES = 0`` for measurement runs — failures are visible,
 not hidden (measurement contract §7).
 
@@ -36,11 +42,14 @@ Category                        Meaning
 ==============================  =================================================
 ``endpoint_error``              The model client raised a client error while
                                 producing a turn.
-``malformed_tool_call``         The turn's tool-call line could not be parsed
-                                as JSON, or lacked the required structure.
-``invalid_tool_name``           The tool call named a tool that does not exist.
+``malformed_tool_call``         The turn did not produce exactly one valid
+                                native tool call (zero/parallel/legacy-text/
+                                incomplete/malformed/mixed/bad-index assembly).
+``invalid_tool_name``           The assembled call named a tool that does not
+                                exist (native ``unknown_tool``).
 ``invalid_tool_arguments``      The tool exists but the arguments violate its
-                                contract (missing/unexpected/ill-typed/empty).
+                                contract (native ``invalid_arguments``, or a
+                                mock path that reaches the toolbox).
 ``no_terminal_recommendation``  The agent exhausted ``max_turns`` without ever
                                 calling ``recommend_remediation``.
 ``task_timeout``                The per-task deadline (profile-specific)
@@ -60,18 +69,18 @@ from datetime import datetime, timezone
 
 from blackwell_lab.workload.clock import SYSTEM_CLOCK, Clock
 from blackwell_lab.workload.model_client import (
-    TOOL_CALL_PREFIX,
     GenerationSettings,
     Message,
     ModelClient,
     ModelClientError,
     ModelClientTimeout,
+    NativeToolCall,
+    NativeToolCallError,
 )
 from blackwell_lab.workload.sampling import TaskInstance
 from blackwell_lab.workload.scenarios import Scenario
 from blackwell_lab.workload.tools import (
     TERMINAL_TOOL,
-    TOOL_SPECS,
     InvalidToolArgumentsError,
     InvalidToolNameError,
     SimulatedToolbox,
@@ -110,11 +119,14 @@ TOKENS_UNAVAILABLE_NO_USAGE = (
 class TurnRecord:
     """Driver-side record of one model turn (monotonic-clock durations).
 
-    ``ttft_ms`` is measured at the first non-empty content-bearing event.
-    ``inter_token_gaps_ms`` is populated only from true ``token`` events;
-    when a client (like the mock) emits only transport chunks, ITL is
-    unavailable and ``itl_unavailable_reason`` says why. ``output_tokens``
-    comes only from authoritative ``usage`` events, never from chunk counts.
+    ``ttft_ms`` is measured at the first meaningful model-output event:
+    content, reasoning output, or a privacy-safe ``native_tool_call_delta``
+    (the first streamed tool-call fragment — never the later assembled
+    ``native_tool_call``). ``chunk_count`` is a privacy-safe output-event
+    count (content, reasoning, first tool-call delta); it is not a token
+    count. ``inter_token_gaps_ms`` is populated only from true ``token``
+    events. ``output_tokens`` comes only from authoritative ``usage``
+    events, never from chunk or delta counts.
     """
 
     ttft_ms: float | None
@@ -152,6 +164,7 @@ class TaskExecution:
     rationale: str | None = None
     remediation_id: str | None = None
     tool_trace: list[ToolTrace] = field(default_factory=list)
+    tool_call_diagnostics: dict | None = None
     turns: list[TurnRecord] = field(default_factory=list)
     e2e_ms: float = 0.0
     queue_wait_ms: float = 0.0
@@ -168,39 +181,64 @@ class TaskExecution:
         return [t.simulated_latency_ms for t in self.tool_trace]
 
 
-def _parse_tool_call(turn_text: str) -> dict:
-    """Extracts and validates the structure of the turn's tool-call line.
+#: First-event kinds that start the TTFT clock (measurement contract §2).
+#: ``native_tool_call`` is the assembled executable call and is not a
+#: first-delta timing event.
+_TTFT_EVENT_KINDS = frozenset(
+    {"content_chunk", "reasoning_chunk", "native_tool_call_delta", "token"}
+)
 
-    Raises ``ValueError`` (mapped to ``malformed_tool_call``) if the line is
-    missing, is not valid JSON, or lacks the required shape.
-    """
-    call_lines = [line for line in turn_text.splitlines() if line.startswith(TOOL_CALL_PREFIX)]
-    if not call_lines:
-        raise ValueError("turn contains no TOOL_CALL line")
-    if len(call_lines) > 1:
-        raise ValueError("turn contains more than one TOOL_CALL line")
-    raw = call_lines[0][len(TOOL_CALL_PREFIX) :].strip()
-    try:
-        call = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"tool call is not valid JSON: {exc.msg}") from exc
-    if not isinstance(call, dict) or "tool" not in call or "arguments" not in call:
-        raise ValueError('tool call must be an object with "tool" and "arguments"')
-    if not isinstance(call["tool"], str):
-        raise ValueError("tool name must be a string")
-    return call
+#: Native assembly categories that map to a more specific execution error.
+_NATIVE_ERROR_TAXONOMY = {
+    "unknown_tool": "invalid_tool_name",
+    "invalid_arguments": "invalid_tool_arguments",
+}
+
+#: Privacy-safe output events counted in ``TurnRecord.chunk_count``.
+_OUTPUT_EVENT_KINDS = frozenset({"content_chunk", "reasoning_chunk", "native_tool_call_delta"})
+
+
+def _error_category_for_native(failure_category: str) -> str:
+    return _NATIVE_ERROR_TAXONOMY.get(failure_category, "malformed_tool_call")
+
+
+def _completed_turn_record(
+    *,
+    dispatch: float,
+    first_output_at: float | None,
+    turn_end: float,
+    output_events: int,
+    content_chars: int,
+    token_times: list[float],
+    usage_tokens: int | None,
+    engine_queue_ms: float | None,
+) -> TurnRecord:
+    gaps = tuple((token_times[i] - token_times[i - 1]) * 1000.0 for i in range(1, len(token_times)))
+    itl_available = len(token_times) >= 2
+    return TurnRecord(
+        ttft_ms=((first_output_at - dispatch) * 1000.0 if first_output_at is not None else None),
+        serving_time_ms=(turn_end - dispatch) * 1000.0,
+        chunk_count=output_events,
+        content_chars=content_chars,
+        inter_token_gaps_ms=gaps if itl_available else (),
+        itl_available=itl_available,
+        itl_unavailable_reason=(None if itl_available else ITL_UNAVAILABLE_NO_TOKEN_EVENTS),
+        output_tokens=usage_tokens,
+        tokens_unavailable_reason=(
+            None if usage_tokens is not None else TOKENS_UNAVAILABLE_NO_USAGE
+        ),
+        engine_queue_time_ms=engine_queue_ms,
+    )
 
 
 def _system_prompt(scenario: Scenario) -> str:
-    tool_lines = "\n".join(f"- {name}" for name in TOOL_SPECS)
+    del scenario
     return (
         "You are a Cloud Operations Agent working a synthetic incident. "
-        "Diagnose the incident using only your tools, then submit exactly one "
-        f"recommendation via {TERMINAL_TOOL} with a diagnosis_id chosen from the "
-        "published candidate list, a short rationale, and a remediation_id. "
-        f"Available tools:\n{tool_lines}\n"
-        "Reply each turn with a single line starting with "
-        f'{TOOL_CALL_PREFIX} {{"tool": ..., "arguments": ...}}'
+        "Diagnose the incident using only the provided tools, then submit "
+        f"exactly one recommendation via {TERMINAL_TOOL} with a diagnosis_id "
+        "chosen from the published candidate list, a short rationale, and a "
+        "remediation_id. Call exactly one tool per turn."
     )
 
 
@@ -272,18 +310,26 @@ def run_task(
         # --- one model turn, streamed and timed at the driver boundary ---
         dispatch = clock.monotonic()
         chunks: list[str] = []
-        first_content_at: float | None = None
+        output_events = 0
+        first_output_at: float | None = None
         token_times: list[float] = []
         usage_tokens: int | None = None
         engine_queue_ms: float | None = None
+        native_calls: list[NativeToolCall] = []
+
         try:
             events = client.stream_turn(messages, settings, deadline=deadline, clock=clock)
             for event in events:
                 now = clock.monotonic()
+                if event.kind in _TTFT_EVENT_KINDS and first_output_at is None:
+                    if event.kind != "token" or event.text:
+                        first_output_at = now
+                if event.kind in _OUTPUT_EVENT_KINDS:
+                    output_events += 1
                 if event.kind in ("content_chunk", "token") and event.text:
-                    if first_content_at is None:
-                        first_content_at = now
                     chunks.append(event.text)
+                if event.kind == "native_tool_call" and event.tool_call is not None:
+                    native_calls.append(event.tool_call)
                 if event.kind == "token":
                     token_times.append(now)
                 elif event.kind == "usage" and event.output_tokens is not None:
@@ -294,6 +340,21 @@ def run_task(
                     return finish("timeout", "task_timeout")
         except ModelClientTimeout:
             return finish("timeout", "task_timeout")
+        except NativeToolCallError as exc:
+            execution.turns.append(
+                _completed_turn_record(
+                    dispatch=dispatch,
+                    first_output_at=first_output_at,
+                    turn_end=clock.monotonic(),
+                    output_events=output_events,
+                    content_chars=len("".join(chunks)),
+                    token_times=token_times,
+                    usage_tokens=usage_tokens,
+                    engine_queue_ms=engine_queue_ms,
+                )
+            )
+            execution.tool_call_diagnostics = exc.diagnostics
+            return finish("error", _error_category_for_native(exc.category))
         except ModelClientError:
             # retries=0: an endpoint failure fails the task visibly.
             return finish("error", "endpoint_error")
@@ -301,43 +362,47 @@ def run_task(
             # An unexpected client exception must not abort the repetition;
             # it is recorded as a sanitized category with no exception text.
             return finish("error", "agent_runtime_error")
-        turn_end = clock.monotonic()
-
-        turn_text = "".join(chunks)
-        gaps = tuple(
-            (token_times[i] - token_times[i - 1]) * 1000.0 for i in range(1, len(token_times))
-        )
-        itl_available = len(token_times) >= 2
         execution.turns.append(
-            TurnRecord(
-                ttft_ms=(
-                    (first_content_at - dispatch) * 1000.0 if first_content_at is not None else None
-                ),
-                serving_time_ms=(turn_end - dispatch) * 1000.0,
-                chunk_count=len(chunks),
-                content_chars=len(turn_text),
-                inter_token_gaps_ms=gaps if itl_available else (),
-                itl_available=itl_available,
-                itl_unavailable_reason=(None if itl_available else ITL_UNAVAILABLE_NO_TOKEN_EVENTS),
-                output_tokens=usage_tokens,
-                tokens_unavailable_reason=(
-                    None if usage_tokens is not None else TOKENS_UNAVAILABLE_NO_USAGE
-                ),
-                engine_queue_time_ms=engine_queue_ms,
+            _completed_turn_record(
+                dispatch=dispatch,
+                first_output_at=first_output_at,
+                turn_end=clock.monotonic(),
+                output_events=output_events,
+                content_chars=len("".join(chunks)),
+                token_times=token_times,
+                usage_tokens=usage_tokens,
+                engine_queue_ms=engine_queue_ms,
             )
         )
-        messages.append(Message("assistant", turn_text))
 
         if clock.monotonic() >= deadline:
             return finish("timeout", "task_timeout")
 
-        # --- parse, validate, and execute the tool call (retries=0) ---
-        try:
-            call = _parse_tool_call(turn_text)
-        except ValueError:
+        # Native tool calls only. The retired TOOL_CALL text protocol is
+        # never accepted, even if content happens to contain that prefix.
+        if len(native_calls) != 1:
+            assembled_text = "".join(chunks)
+            execution.tool_call_diagnostics = {
+                "failure_category": (
+                    "legacy_text_tool_call" if "TOOL_CALL:" in assembled_text else "zero_tool_calls"
+                )
+                if not native_calls
+                else "parallel_or_multiple_tool_calls",
+                "event_types": ["content"] if assembled_text else [],
+                "tool_call_count": len(native_calls),
+                "function_name_valid": None,
+                "arguments_json_ok": None,
+                "arguments_schema_ok": None,
+                "content_chars": len(assembled_text),
+                "usage_completion_tokens": usage_tokens,
+            }
             return finish("error", "malformed_tool_call")
+        call = native_calls[0]
+        messages.append(
+            Message("assistant", content="", tool_calls=(call,)),
+        )
         try:
-            result = toolbox.execute(call["tool"], call["arguments"])
+            result = toolbox.execute(call.name, call.arguments)
         except InvalidToolNameError:
             return finish("error", "invalid_tool_name")
         except InvalidToolArgumentsError:
@@ -348,7 +413,7 @@ def run_task(
         execution.tool_trace.append(
             ToolTrace(
                 tool=result.tool,
-                arguments=dict(call["arguments"]),
+                arguments=dict(call.arguments),
                 result=result.payload,
                 simulated_latency_ms=result.simulated_latency_ms,
             )
@@ -361,13 +426,17 @@ def run_task(
             return finish("timeout", "task_timeout")
 
         if result.tool == TERMINAL_TOOL:
-            execution.diagnosis_id = call["arguments"]["diagnosis_id"]
-            execution.rationale = call["arguments"]["rationale"]
-            execution.remediation_id = call["arguments"]["remediation_id"]
+            execution.diagnosis_id = call.arguments["diagnosis_id"]
+            execution.rationale = call.arguments["rationale"]
+            execution.remediation_id = call.arguments["remediation_id"]
             return finish("completed")
 
         messages.append(
-            Message("tool", json.dumps({"tool": result.tool, "result": result.payload}))
+            Message(
+                "tool",
+                content=json.dumps(result.payload, sort_keys=True),
+                tool_call_id=call.call_id,
+            )
         )
 
     return finish("error", "no_terminal_recommendation")
