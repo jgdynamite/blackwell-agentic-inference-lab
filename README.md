@@ -16,11 +16,15 @@ and merged canonical `main`, and changes must never flow from the mirror back
 to this repository.
 
 **Status:** Phases 1 and 2 are **complete**. Phase 3A (Akamai baseline
-readiness) is **complete**. Phase 3B is authorized **only** for one bounded
-Akamai compatibility/headroom pilot in `us-sea` on plan
-`g3-gpu-rtxpro6000-blackwell-1` (decision D-0014). The full 12-cell Phase 3
-baseline is **not authorized**. Phase 4 and later phases remain
-**unauthorized** ([docs/roadmap.md](docs/roadmap.md)).
+readiness) is **complete**. Phase 3B's D-0014 compatibility/headroom pilot
+is complete as a diagnostic. Decision **D-0017 authorizes implementation**
+of the Akamai **minimum valuable lab** (`blackwell-cloud mvl-baseline`):
+provider-native, three cells, existing frozen pins. It is sufficient for
+exploratory reporting and a first project article; it is **not** a complete
+controlled-resource or cross-cloud study. **Live MVL execution still
+requires** separate digest-bearing apply and `mvl-baseline` approval
+phrases. Phase 4 and later phases remain **unauthorized**
+([docs/roadmap.md](docs/roadmap.md)).
 
 - **No genuine benchmarks have been run yet.** No results exist.
 - **All current example files are synthetic** and clearly labeled as such.
@@ -130,10 +134,11 @@ blackwell-cloud readiness
 ```
 
 The bounded Phase 3B pilot (`blackwell-cloud apply`, `pilot`, `destroy`)
-runs only in the owner's authenticated local environment and still requires
-each command's separate exact approval phrase. The full 12-cell baseline
-stays disabled. See [infra/akamai/README.md](infra/akamai/README.md) and
-decision D-0014.
+and the D-0017 `mvl-baseline` command run only in the owner's
+authenticated local environment and still require each command's separate
+exact approval phrase. Live MVL execution is not authorized by D-0017
+itself. See [infra/akamai/README.md](infra/akamai/README.md) and
+decisions D-0014 and D-0017.
 
 ## Project governance
 

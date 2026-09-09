@@ -2,9 +2,10 @@
 
 This document describes both the **implemented architecture** (Phases 1–2
 and the completed Phase 3A readiness layer) and the intended architecture of
-later phases. Phase 3B is authorized only for one bounded
-compatibility/headroom pilot (decision D-0014). The full 12-cell baseline
-and later phases remain unauthorized.
+later phases. Decision D-0017 authorizes implementation of the Akamai
+minimum valuable lab (provider-native, three cells). Live execution still
+requires separate digest-bearing approval phrases. Phase 4 and later
+phases remain unauthorized.
 
 ## Overview
 
@@ -204,13 +205,10 @@ privately with the run results.
 
 Two strictly separated modes (never mixed in analysis or reporting):
 
-1. **Controlled-resource mode.** The serving and benchmark workload run
-   under a documented common CPU and system-memory envelope that is the same
-   on all three providers, defined as a **joint total across both containers
-   combined** (provisional: 14 vCPUs / 100 GiB joint total, see
-   [feasibility-report.md](feasibility-report.md) §7). The exact per-container
-   allocation and the cgroup enforcement mechanism are frozen only after
-   Phase 3 headroom validation.
+1. **Controlled-resource mode.** A documented joint CPU and system-memory
+   envelope (provisional: 14 vCPUs / 100 GiB) is optional future work and
+   is **not** part of the D-0017 MVL. A comparison-mode label without
+   verified enforcement remains a fabrication (decision D-0013).
 2. **Provider-native mode.** Each provider's normal purchasable instance
    configuration, no artificial caps; evaluates what a customer actually
    receives, including economics.
@@ -223,24 +221,25 @@ memory, storage type, network configuration, virtualization, driver, CUDA
 version, OS, region, and any other material environmental facts, so
 differences are recorded rather than hidden.
 
-## Phase 3 — Akamai deployment architecture (3A readiness complete; 3B bounded pilot authorized)
+## Phase 3 — Akamai deployment architecture (3A complete; D-0017 MVL authorized)
 
 Phase 3A implemented the **readiness** layer: Terraform under
 [../infra/akamai/](../infra/akamai/), the bootstrap design under
 `infra/akamai/bootstrap/`, and the `blackwell-cloud` CLI
-(`src/blackwell_lab/cloud/`). Decision D-0014 authorizes one bounded
-compatibility/headroom pilot; every billable or destructive action still
-requires its separate exact local owner approval phrase and refuses to
-execute in hosted/CI environments. The full 12-cell baseline remains
-unauthorized. There is **no frontend application** — the entire workflow is
-CLI-first.
+(`src/blackwell_lab/cloud/`). Decision D-0017 authorizes
+`blackwell-cloud mvl-baseline` (provider-native, three cells) on the
+existing pilot and `run_real_cell` paths. Every billable or destructive
+action still requires its separate exact local owner approval phrase and
+refuses to execute in hosted/CI environments. Live MVL apply is not
+authorized by D-0017 itself. There is **no frontend application** — the
+entire workflow is CLI-first.
 
 ### Deployment view (single Akamai GPU instance)
 
 ```mermaid
 flowchart TB
     subgraph operator["Owner's authenticated local environment (never the hosted Cloud Agent)"]
-        cli["blackwell-cloud CLI<br/>readiness / plan / apply (gated) /<br/>pilot (gated) / verify-results /<br/>teardown-plan / destroy (gated) /<br/>orphan-report"]
+        cli["blackwell-cloud CLI<br/>readiness / plan / apply (gated) /<br/>pilot (gated) / mvl-baseline (gated) /<br/>verify-results / teardown-plan /<br/>destroy (gated) / orphan-report"]
         tf["Terraform (pinned CLI + linode provider 4.1.0)<br/>state + tfvars OUTSIDE Git"]
         preflight["Authenticated read-only preflight<br/>plan entitlement, regions, price<br/>(sanitized output; local only)"]
     end

@@ -120,12 +120,15 @@ explicitly revises them in writing.
    [docs/roadmap.md](docs/roadmap.md). Work on a later phase begins only after
    the project owner explicitly authorizes it.
 2. Phase status: **Phases 1 and 2 are complete.** **Phase 3A is complete.**
-   **Phase 3B is authorized only for one bounded Akamai compatibility/headroom
-   pilot** (decision D-0014): provider-native, `us-sea`, plan
-   `g3-gpu-rtxpro6000-blackwell-1`, one GPU instance plus its firewall, six
-   hours / $25 maximum. The **full Phase 3 baseline is not authorized**.
-   **Phase 4 and later phases remain unauthorized** and require separate
-   explicit owner authorization. Actual apply, pilot, and destroy commands
+   **Phase 3B D-0014 pilot is complete as a diagnostic.** Decision **D-0017
+   authorizes implementation** of the Akamai **minimum valuable lab**
+   (`blackwell-cloud mvl-baseline`): provider-native, three cells, native
+   tool transport, existing pins. This is an initial Akamai baseline for
+   exploratory reporting — not a complete controlled-resource or cross-cloud
+   study. **Live MVL execution still requires** separate digest-bearing apply
+   and `mvl-baseline` approval phrases. The D-0014 six-hour / $25 pilot
+   envelope remains separately named. **Phase 4 and later phases remain
+   unauthorized.** Actual apply, pilot, mvl-baseline, and destroy commands
    still require their separate exact local approval phrases.
 
 ## 8. Repository hygiene

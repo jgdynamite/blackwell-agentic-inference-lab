@@ -1122,6 +1122,7 @@ class TestSessionRecord:
             "provisioning_s",
             "setup_s",
             "pilot_s",
+            "mvl_s",
             "teardown_s",
         }
 

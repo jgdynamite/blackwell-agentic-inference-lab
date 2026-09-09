@@ -1,8 +1,8 @@
 """Tests for the blackwell-cloud CLI: gates, guards, and verification.
 
 Everything runs offline. Billable verbs are exercised only through their
-refusal paths or injected fakes; the full-baseline command must refuse
-unconditionally (the full 12-cell baseline remains unauthorized).
+refusal paths or injected fakes. The full-baseline command remains
+disabled; the D-0017 MVL is a separate ``mvl-baseline`` command.
 """
 
 from __future__ import annotations
@@ -53,7 +53,7 @@ class TestFullBaselineGate:
         err = capsys.readouterr().err
         assert "DISABLED" in err
         assert "not authorized" in err
-        assert "decision-log" in err
+        assert "mvl-baseline" in err
 
 
 def pilot_config(tmp_path, comparison_mode="provider-native", **overrides):

@@ -3,10 +3,11 @@
 Terraform configuration for **exactly one** single-GPU NVIDIA RTX PRO 6000
 Blackwell Server Edition instance plus its run-tagged Cloud Firewall, used for
 one owner-approved session at a time. Phase 3A readiness is **complete**.
-Decision D-0014 authorizes **only** one bounded Phase 3B
-compatibility/headroom pilot. The full 12-cell baseline remains unauthorized.
-Actual apply, pilot, and destroy still require their separate exact local
-approval phrases.
+Decision D-0014 authorized the bounded Phase 3B compatibility/headroom
+pilot. Decision D-0017 authorizes **implementation** of the Akamai
+minimum valuable lab. Live apply, `mvl-baseline`, and destroy still require
+their separate exact local approval phrases. The D-0014 six-hour / $25
+envelope remains separately named.
 
 ## Safety contract (do not weaken)
 
@@ -57,13 +58,17 @@ intended configuration and planned actions only. It does not prove live
 capacity. Capacity is known when the provider accepts provisioning and the
 instance reaches the expected running state.
 
-Authorized envelope: provider-native only; one GPU instance plus its one
-project/run-tagged firewall; six hours maximum instance lifetime; **$25
-total** session ceiling; owner checkpoint at three elapsed hours.
-Diagnostic cells only: interactive/1, batch-heavy/4, batch-heavy/8 (one
-warm-up, one measured repetition, 20 tasks each). Pilot observations must
-not be represented as comparative benchmark findings. The full 12-cell
-baseline is not authorized.
+D-0014 pilot envelope (unchanged, separately named): provider-native only;
+one GPU instance plus its one project/run-tagged firewall; six hours
+maximum instance lifetime; **$25 total** session ceiling; owner checkpoint
+at three elapsed hours; diagnostic cells interactive/1, batch-heavy/4,
+batch-heavy/8.
+
+D-0017 MVL envelope (implementation only until a live phrase is issued):
+provider-native only; the same six-hour infrastructure lock; one
+diagnostic canary then three measured cells (interactive/1, batch-heavy/4,
+batch-heavy/8) with 1 warm-up + 3 × 200 tasks. Completion or failure
+never deletes resources; `teardown-plan` is run from the owner's laptop.
 
 ## Credentials and API access
 
@@ -331,8 +336,28 @@ no pending lifecycle operation; `reconciled=true`; `provider_checked=true`;
 exactly one instance and one firewall in the ledger; and live provenance
 re-verified **immediately before every cell** (observations from the first
 cell are never reused). Config, approval, and ledger checks run before any
-model request, telemetry, or measurement. The full 12-cell baseline remains
-disabled.
+model request, telemetry, or measurement.
+
+### 7b. Minimum valuable lab (D-0017 implementation; live phrase still required)
+
+The watchdog recognizes `blackwell-cloud mvl-baseline` and is **not** an
+Akamai billing control. Terraform state and provider credentials stay on
+the owner's laptop, never on the GPU host.
+
+```bash
+blackwell-cloud mvl-baseline \
+  --run-tag p3-mvl-20260908a \
+  --run-label mvl-a \
+  --config /absolute/private/path/outside/the/repository/mvl.json \
+  --approve "I approve the Akamai minimum valuable baseline for run p3-mvl-20260908a (mvl-a) using config sha256:<digest-of-those-config-bytes>"
+```
+
+The config must name the exact canonical commit, the frozen pins, and the
+three-cell matrix. After the canary a sanitized projection that exceeds
+the remaining six-hour session stops measured work. Completion or failure
+stops inference and tells the owner to run `teardown-plan` from their
+laptop. This command never generates a Terraform destroy plan on the GPU
+host and never deletes automatically.
 
 ### 8. Verify exported results
 

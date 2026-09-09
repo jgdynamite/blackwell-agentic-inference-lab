@@ -693,3 +693,77 @@ The correction is bounded to the wire protocol, launch parser flags, and
 measurement-contract wording. Task definitions, evaluator rules, maximum
 turns, seeds, temperatures, top_p values, concurrency cells, and success
 criteria are unchanged. The full 12-cell baseline remains unauthorized.
+
+## 2026-09-08 — D-0017: Akamai minimum valuable lab
+
+**No genuine MVL results predate this change.** Run-e's quality and
+performance remain diagnostic and nonpublishable because they used the
+retired text protocol. Run-e infrastructure, serving, live provenance,
+teardown, and the locally verified model aggregate
+`sha256:5d6a435f3e0faf95dd4a610c66fefd9c4ccbe350af950216dab9fec6f3d3da0d`
+at revision `a9904d24bcc1d289a1950fa9d2b978c47cf903b9` support this freeze.
+Raw run-e results do not enter Git.
+
+**Decision.** The owner authorizes **implementation** of the Akamai
+**minimum valuable lab** (`blackwell-cloud mvl-baseline`). This is an
+initial provider-native Akamai baseline, sufficient for exploratory
+reporting and a first project article. It is **not** a complete
+controlled-resource or cross-cloud study. Live execution still requires
+separate digest-bearing apply and `mvl-baseline` approval phrases. Phase 4
+optimization remains unauthorized. Dynamo, NIM, TensorRT-LLM, NVFP4, and
+any other model are not added.
+
+**Reporting.** p50 and p95 are primary. p99 is exploratory because of
+sample size (1,800 measured observations across three cells).
+Controlled-resource mode and additional engines are optional future work.
+AWS and GCP will later repeat this same MVL matrix if quota permits.
+
+**Frozen identity.**
+
+| Dimension | Frozen value |
+| --- | --- |
+| Provider / region / plan | Akamai Cloud / `us-sea` / `g3-gpu-rtxpro6000-blackwell-1` |
+| GPU | one RTX PRO 6000 Blackwell Server Edition |
+| Model | `nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-BF16` |
+| Model revision | `a9904d24bcc1d289a1950fa9d2b978c47cf903b9` |
+| Aggregate artifact hash | `sha256:5d6a435f3e0faf95dd4a610c66fefd9c4ccbe350af950216dab9fec6f3d3da0d` |
+| Per-file digests | host-resident sha256sum manifest at `MODEL_DIGEST_MANIFEST`; live re-verified; never committed |
+| Precision | BF16 only |
+| Serving | vLLM 0.27.1 linux/amd64 `sha256:c2f3b1b964e47809b722b5e75b61b1e7b39a50f70388cf2bf2418f16a9f31da2` |
+| CUDA / driver / Docker / CTK | existing exact pins (CUDA 13.0, open driver 580.173.02, docker.io 29.1.3, CTK 1.20.0-1) |
+| Tool transport | native OpenAI `tools` / `tool_choice=auto` / `parallel_tool_calls=false` |
+| Parsers | `--reasoning-parser nemotron_v3`, `--tool-call-parser qwen3_coder`, auto tool choice enabled |
+| Reasoning mode | true |
+| Sampling | temperature 1.0, top_p 0.95, max_tokens 1024, seed 20260906 |
+| Workload | `cloud-ops-agent` 2.3.0; existing scenarios, evaluator, SLOs, timeouts |
+| Measurement | 1 warm-up pass, 3 measured repetitions, 200 balanced tasks per repetition |
+
+**Matrix.** Provider-native only:
+
+1. interactive / concurrency 1
+2. batch-heavy / concurrency 4
+3. batch-heavy / concurrency 8
+
+Three cells, 9 measured repetitions, 1,800 measured task observations.
+AWS and GCP later repeat this same matrix if quota permits.
+
+**Canary.** One diagnostic-only canary on the same deployment covers all
+ten scenarios once, exercises native `tool_calls` and `role=tool` round
+trips, and fails closed on structural errors. Evaluator quality is
+recorded but is not a gate. Failure persists a sanitized external
+failure record, runs zero measured tasks, and tells the owner to
+generate a teardown plan from their laptop. Success continues into the
+three measured cells. An interrupted MVL is restarted later under a new
+run label; there is no resume ledger.
+
+**Safety.** The existing six-hour infrastructure envelope is unchanged.
+The canary duration is used to check that measured work is reasonably
+projected to finish in the remaining session. The watchdog recognizes
+`blackwell-cloud mvl-baseline` and remains a workload safeguard — it
+does not stop Akamai billing. Completion or failure never deletes
+provider resources and never claims the GPU host generated a Terraform
+destroy plan. Teardown-plan must be run from the owner's laptop.
+
+**Rationale.** Owner authorization of 2026-09-08 (Akamai minimum valuable
+lab). Implementation is code-and-review only until the owner issues the
+exact apply and `mvl-baseline` phrases.

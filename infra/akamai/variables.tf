@@ -95,15 +95,16 @@ variable "authorized_ssh_key" {
 variable "ttl_hours" {
   description = <<-EOT
     Intended maximum session length in hours, recorded as a ttl tag.
-    Locked to 6 for the authorized D-0014 diagnostic pilot. Informational
-    cost control: Akamai has no native auto-stop, and powering off does NOT
-    stop billing — the instance must be DELETED to stop charges.
+    Locked to 6 for the authorized D-0014 diagnostic pilot and the D-0017
+    Akamai minimum valuable lab. Informational cost control: Akamai has no
+    native auto-stop, and powering off does NOT stop billing — the instance
+    must be DELETED to stop charges.
   EOT
   type        = number
   default     = 6
 
   validation {
     condition     = var.ttl_hours == 6
-    error_message = "ttl_hours must equal 6 for the authorized D-0014 diagnostic pilot."
+    error_message = "ttl_hours must equal 6 for the authorized six-hour Akamai session envelope."
   }
 }

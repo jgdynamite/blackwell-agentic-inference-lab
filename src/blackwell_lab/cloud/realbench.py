@@ -110,7 +110,7 @@ class RequiredMeasurementError(RuntimeError):
 #: "controlled-resource" would be labeled by configuration alone — a
 #: fabrication — so the mode is rejected outright. Enabling it is a reviewed
 #: code change gated on verified enforcement, never a runtime flag
-#: (decision D-0013).
+#: (decision D-0013). Optional future work, not part of the D-0017 MVL.
 CONTROLLED_RESOURCE_ENFORCEMENT_IMPLEMENTED = False
 
 
@@ -142,8 +142,6 @@ class RealRunSpec:
     container_cuda_runtime_version: str | None = None  # observed, never configured
     run_label: str = "real"
     generation: GenerationSettings = field(
-        # Model-card recommended sampling (feasibility report §5); frozen
-        # for the full baseline only after the pilot (decision D-0012).
         default_factory=lambda: GenerationSettings(temperature=1.0, top_p=0.95, reasoning_mode=True)
     )
 
@@ -527,6 +525,9 @@ def run_real_cell(
     for directory in (results_dir / "real-runs", target_dir):
         with contextlib.suppress(OSError):
             os.chmod(directory, 0o700)
+    existing = sorted(target_dir.glob("*.result.json")) + sorted(target_dir.glob("*.manifest.json"))
+    if existing:
+        raise ConfigError("refusing to overwrite existing genuine artifacts in this run label")
 
     full_catalog = catalog()
     template_ids = list(full_catalog)

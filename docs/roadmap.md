@@ -5,9 +5,11 @@ explicitly authorizes it, and work stops at the end of the currently
 authorized phase** ([AGENTS.md](../AGENTS.md), section 7).
 
 Phase status: **Phases 1 and 2 are complete.** **Phase 3A is complete.**
-**Phase 3B is authorized only for one bounded Akamai compatibility/headroom
-pilot** (decision D-0014). The **full Phase 3 baseline is not authorized**.
-**Phase 4 and later phases remain unauthorized.**
+**Phase 3B D-0014 pilot is complete as a diagnostic.** Decision **D-0017
+authorizes implementation** of the Akamai minimum valuable lab
+(provider-native, three cells); **live execution still requires separate
+digest-bearing approval phrases**. **Phase 4 and later phases remain
+unauthorized.**
 
 ## Phase 1 — Repository foundation and feasibility *(complete)*
 
@@ -64,9 +66,9 @@ sanitized authenticated preflight; and the `blackwell-cloud` workflows
 teardown plan, orphan report). Lifecycle-safety policy is recorded as
 decision D-0013.
 
-### Phase 3B — provisioning and measurement *(bounded pilot authorized; full baseline not authorized)*
+### Phase 3B — provisioning and measurement *(D-0014 pilot complete; D-0017 MVL implementation authorized; live MVL not yet approved)*
 
-Decision D-0014 authorizes **only one** Akamai compatibility/headroom pilot:
+Decision D-0014 authorized **only one** Akamai compatibility/headroom pilot:
 
 - region `us-sea`, plan `g3-gpu-rtxpro6000-blackwell-1`;
 - exactly one GPU instance and its one project/run-tagged firewall;
@@ -82,12 +84,15 @@ exact local approval phrases. Teardown may target only ledger-recorded
 resources; post-destroy provider verification and an orphan report are
 mandatory.
 
-Full-run settings — model artifact and hash, vLLM container digest, BF16
-configuration, generation settings, warm-up, timeouts, resource allocation,
-and cgroup enforcement — are **frozen only after the pilot**. The full
-12-cell baseline then requires its own explicit authorization. Every
-provisioning action follows [AGENTS.md](../AGENTS.md) §1 and
-[cost-guardrails.md](cost-guardrails.md).
+Decision **D-0017** freezes the Akamai **minimum valuable lab**: the same
+pins, provider-native only, three cells (interactive/1, batch-heavy/4,
+batch-heavy/8), 1 warm-up + 3 × 200 tasks (1,800 measured observations).
+p50 and p95 are primary; p99 is exploratory. Live apply and
+`mvl-baseline` still require their separate digest-bearing phrases. The
+D-0014 six-hour / $25 envelope stays separately named. Controlled-resource
+mode, additional engines, and a 12-cell matrix remain optional future
+work. Phase 4 remains unauthorized. Every provisioning action follows
+[AGENTS.md](../AGENTS.md) §1 and [cost-guardrails.md](cost-guardrails.md).
 
 ## Phase 4 — NVIDIA optimization
 

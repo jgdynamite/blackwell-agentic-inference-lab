@@ -128,10 +128,8 @@ class TestSpecValidation:
                 sampler_factory=FakeSampler,
             )
 
-    def test_controlled_resource_is_rejected_until_enforcement_exists(self):
-        # A configuration-supplied controlled-resource label is a
-        # fabrication until the joint cgroup envelope is genuinely enforced.
-        with pytest.raises(ConfigError, match="controlled-resource runs are rejected"):
+    def test_controlled_resource_is_rejected_until_enforced(self):
+        with pytest.raises(ConfigError, match="not yet implemented"):
             run_real_cell(
                 make_spec(
                     comparison_mode="controlled-resource",
@@ -222,6 +220,11 @@ class TestGenuineCell:
             sampler_factory=FakeSampler,
             clock=FakeClock(),
         )
+
+    def test_refuses_to_overwrite_existing_artifacts(self, real_results_dir):
+        self._run(real_results_dir, run_label="once")
+        with pytest.raises(ConfigError, match="overwrite"):
+            self._run(real_results_dir, run_label="once")
 
     def test_documents_are_gpu_mode_and_schema_valid(self, real_results_dir):
         records = self._run(real_results_dir)
